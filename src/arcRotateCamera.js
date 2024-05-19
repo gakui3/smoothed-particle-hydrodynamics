@@ -1,4 +1,3 @@
-// ArcRotateCamera.js
 import {mat4, vec3} from "wgpu-matrix";
 
 export class ArcRotateCamera {
@@ -6,41 +5,73 @@ export class ArcRotateCamera {
     this.alpha = alpha;
     this.beta = beta;
     this.radius = radius;
-    this.target = vec3.fromValues(...target);
+    this.target = vec3.create();
+    vec3.set(this.target, target[0], target[1], target[2]);
     this.cameraPosition = vec3.create();
-    this.viewMatrix = mat4.create();
-    this.projectionMatrix = mat4.create();
-    this.mvpMatrix = mat4.create();
     this.isDragging = false;
     this.lastMouseX = 0;
     this.lastMouseY = 0;
   }
 
-  updateViewMatrix() {
+  calculatePosition() {
     this.cameraPosition[0] =
-      this.target[0] + this.radius * Math.sin(this.beta) * Math.cos(this.alpha);
-    this.cameraPosition[1] = this.target[1] + this.radius * Math.cos(this.beta);
+      this.radius * Math.sin(this.beta) * Math.cos(this.alpha);
+    this.cameraPosition[1] = this.radius * Math.cos(this.beta);
     this.cameraPosition[2] =
-      this.target[2] + this.radius * Math.sin(this.beta) * Math.sin(this.alpha);
-    mat4.lookAt(
-      this.viewMatrix,
-      this.cameraPosition,
-      this.target,
-      vec3.fromValues(0, 1, 0)
-    );
-  }
-
-  updateProjectionMatrix(
-    aspect,
-    fov = (2 * Math.PI) / 5,
-    near = 1,
-    far = 100.0
-  ) {
-    mat4.perspective(this.projectionMatrix, fov, aspect, near, far);
+      this.radius * Math.sin(this.beta) * Math.sin(this.alpha);
+    vec3.add(this.cameraPosition, this.cameraPosition, this.target);
   }
 
   updateMVPMatrix() {
-    mat4.multiply(this.mvpMatrix, this.projectionMatrix, this.viewMatrix);
+    const canvas = document.querySelector("canvas");
+    const aspect = canvas.width / canvas.height;
+    const projection = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
+    const view = mat4.create();
+    const mvp = mat4.create();
+
+    this.calculatePosition();
+
+    mat4.identity(view);
+    mat4.translate(view, this.cameraPosition, view);
+    mat4.lookAt(
+      this.cameraPosition,
+      vec3.fromValues(0, 0, 0),
+      vec3.fromValues(0, 1, 0),
+      view
+    );
+    mat4.multiply(projection, view, mvp);
+
+    const mat = new Float32Array([
+      mvp[0],
+      mvp[1],
+      mvp[2],
+      mvp[3],
+      mvp[4],
+      mvp[5],
+      mvp[6],
+      mvp[7],
+      mvp[8],
+      mvp[9],
+      mvp[10],
+      mvp[11],
+      mvp[12],
+      mvp[13],
+      mvp[14],
+      mvp[15],
+      view[0],
+      view[4],
+      view[8], // right
+
+      0, // padding
+
+      view[1],
+      view[5],
+      view[9], // up
+
+      0, // padding
+    ]);
+
+    return mat;
   }
 
   onMouseDown(event) {
@@ -61,13 +92,13 @@ export class ArcRotateCamera {
       this.beta += deltaY * 0.01;
       this.lastMouseX = event.clientX;
       this.lastMouseY = event.clientY;
-      this.beta = Math.max(0.1, Math.min(Math.PI - 0.1, this.beta)); // 上下方向の制限
+      this.beta = Math.max(0.1, Math.min(Math.PI - 0.1, this.beta));
     }
   }
 
   onWheel(event) {
     this.radius += event.deltaY * 0.01;
-    this.radius = Math.max(2, Math.min(50, this.radius)); // 距離の制限
+    this.radius = Math.max(2, Math.min(50, this.radius));
   }
 
   attachControl(canvas) {

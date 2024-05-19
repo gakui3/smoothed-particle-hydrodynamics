@@ -1,6 +1,6 @@
 import {mat4, vec3} from "wgpu-matrix";
 import {GUI} from "dat.gui";
-import {ArcRotateCamera} from "./ArcRotateCamera.js";
+import {ArcRotateCamera} from "./arcRotateCamera.js";
 
 import particleWGSL from "./shaders/particle.wgsl?raw";
 import probabilityMapWGSL from "./shaders/probabilityMap.wgsl?raw";
@@ -238,20 +238,10 @@ const computeBindGroup = device.createBindGroup({
   ],
 });
 
-const aspect = canvas.width / canvas.height;
-const projection = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
-const view = mat4.create();
-const mvp = mat4.create();
-
-const camera = new ArcRotateCamera(Math.PI / 4, Math.PI / 4, 10);
+const camera = new ArcRotateCamera(Math.PI / 4, Math.PI / 4, 3);
 camera.attachControl(canvas);
 
 function frame() {
-  camera.updateViewMatrix();
-  const aspect = canvas.width / canvas.height;
-  camera.updateProjectionMatrix(aspect);
-  camera.updateMVPMatrix();
-
   device.queue.writeBuffer(
     simulationUBOBuffer,
     0,
@@ -267,47 +257,10 @@ function frame() {
     ])
   );
 
-  // カメラのtransformを設定
-  // mat4.identity(view);
-  // mat4.translate(view, vec3.fromValues(0, -0.25, -3), view);
-  // // mat4.rotateX(view, Math.PI * -0.5, view);
-  // mat4.multiply(projection, view, mvp);
-
   device.queue.writeBuffer(
     uniformBuffer,
     0,
-    new Float32Array(camera.mvpMatrix)
-    // new Float32Array([
-    //   // modelViewProjectionMatrix
-    //   mvp[0],
-    //   mvp[1],
-    //   mvp[2],
-    //   mvp[3],
-    //   mvp[4],
-    //   mvp[5],
-    //   mvp[6],
-    //   mvp[7],
-    //   mvp[8],
-    //   mvp[9],
-    //   mvp[10],
-    //   mvp[11],
-    //   mvp[12],
-    //   mvp[13],
-    //   mvp[14],
-    //   mvp[15],
-
-    //   view[0],
-    //   view[4],
-    //   view[8], // right
-
-    //   0, // padding
-
-    //   view[1],
-    //   view[5],
-    //   view[9], // up
-
-    //   0, // padding
-    // ])
+    new Float32Array(camera.updateMVPMatrix())
   );
 
   //現在のスワップチェーンのテクスチャを取得します。このテクスチャがrender targetとして使用される
