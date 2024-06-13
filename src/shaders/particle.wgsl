@@ -65,6 +65,10 @@ fn fs_main(in : VertexOutput) -> @location(0) vec4f {
 struct SimulationParams {
   deltaTime : f32,
   seed : vec4f,
+  smoothlen: f32,
+  densityCoef: f32,
+  pressureStiffness: f32,
+  restDensity: f32,
 }
 
 struct Particle {
@@ -79,36 +83,34 @@ struct Particles {
   particles : array<Particle>,
 }
 
-struct Params {
-  smoothlen: f32,
-  densityCoef: f32,
-}
-
-@binding(0) @group(0) var<uniform> sim_params : SimulationParams;
+@binding(0) @group(0) var<uniform> params : SimulationParams;
 @binding(1) @group(0) var<storage, read_write> data : Particles;
-@binding(2) @group(0) var<storage, read> params: Params;
 
 fn calculateDensity(r_sq: f32) -> f32 {
   let h_sq: f32 = params.smoothlen * params.smoothlen;
   return params.densityCoef * (h_sq - r_sq) * (h_sq - r_sq) * (h_sq - r_sq);
 }
 
+fn calculatePressure(density: f32) -> f32 {
+  return params.pressureStiffness * max(pow(density / params.restDensity, 7.0) - 1.0, 0.0);
+}
+
 @compute @workgroup_size(64)
 fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
 
-  init_rand(idx, sim_params.seed);
+  init_rand(idx, params.seed);
 
   var particle = data.particles[idx];
 
   // 重力を適用します
-  particle.velocity.y = particle.velocity.y - sim_params.deltaTime * 0.5;
+  particle.velocity.y = particle.velocity.y - params.deltaTime * 0.5;
 
   // 基本的な速度統合
-  particle.position = particle.position + sim_params.deltaTime * particle.velocity;
+  particle.position = particle.position + params.deltaTime * particle.velocity;
 
   // 各粒子を老化させます。消える前にフェードアウト。
-  particle.lifetime = particle.lifetime - sim_params.deltaTime;
+  particle.lifetime = particle.lifetime - params.deltaTime;
   particle.color.a = smoothstep(0.0, 0.5, particle.lifetime);
 
   if (particle.lifetime < 0.0) {
@@ -128,7 +130,7 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 @compute @workgroup_size(64)
 fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
-  let s = sim_params.seed;
+  let s = params.seed;
   
   var particle = data.particles[idx];
   var density: f32 = 0.0;
@@ -141,10 +143,17 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
     let diff: vec3<f32> = p.position - particle.position;
     let r2: f32 = dot(diff, diff);
-    if (r2 < 0.0001) {
+    if (rand() < 0.1) {
       density += calculateDensity(r2);
+      particle.color = vec4f(1.0, 0.0, 0.0, 1.0);
     }
   }
+
+  // init_rand(idx, params.seed);
+  // let v: f32 = rand();
+  // if (v < 0.05) {
+  //     particle.color = vec4f(1.0, 0.0, 0.0, 1.0);
+  // }
 
   data.particles[idx] = particle;
 }

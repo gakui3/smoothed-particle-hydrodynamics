@@ -150,29 +150,6 @@ const uniformBindGroup = device.createBindGroup({
   ],
 });
 
-//定数用のreadonly bufferを作成
-const computeParamsBufferSize =
-  1 * 4 + // Smoothlen:f32
-  1 * 4 + // DensityCoef: f32
-  2 * 4;
-
-const computeParamsBuffer = device.createBuffer({
-  size: computeParamsBufferSize,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-});
-
-// const paramsBufferBindGroupLayout = device.createBindGroupLayout({
-//   entries: [
-//     {
-//       binding: 0,
-//       visibility: GPUShaderStage.COMPUTE,
-//       buffer: {
-//         type: "read-only-storage",
-//       },
-//     },
-//   ],
-// });
-
 // -------------------
 
 //描画のためのrenderPassDescriptorを作成
@@ -230,7 +207,11 @@ const simulationUBOBufferSize =
   1 * 4 + // deltaTime
   3 * 4 + // padding
   4 * 4 + // seed
-  0;
+  1 * 4 + // Smoothlen:f32
+  1 * 4 + // DensityCoef: f32
+  1 * 4 + // PressureStiffness: f32
+  1 * 4; // RestDensity: f32
+// 2 * 4; // padding
 const simulationUBOBuffer = device.createBuffer({
   size: simulationUBOBufferSize,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -251,11 +232,6 @@ const bindGroupLayout = device.createBindGroupLayout({
       binding: 1,
       visibility: GPUShaderStage.COMPUTE,
       buffer: {type: "storage"},
-    },
-    {
-      binding: 2,
-      visibility: GPUShaderStage.COMPUTE,
-      buffer: {type: "read-only-storage"},
     },
   ],
 });
@@ -279,13 +255,6 @@ const computeBindGroup = device.createBindGroup({
         buffer: particlesBuffer,
         offset: 0,
         size: numParticles * particleInstanceByteSize,
-      },
-    },
-    {
-      binding: 2,
-      resource: {
-        buffer: computeParamsBuffer,
-        size: computeParamsBufferSize,
       },
     },
   ],
