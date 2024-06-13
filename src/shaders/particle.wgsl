@@ -80,20 +80,17 @@ struct Particles {
 }
 
 struct Params {
-    Smoothlen: f32;
-    DensityCoef: f32;
-};
+  smoothlen: f32,
+  densityCoef: f32,
+}
 
 @binding(0) @group(0) var<uniform> sim_params : SimulationParams;
 @binding(1) @group(0) var<storage, read_write> data : Particles;
-@binding(2) @group(0) var texture : texture_2d<f32>;
-
-@group(0) @binding(1)
-var<storage, read> params: Params;
+@binding(2) @group(0) var<storage, read> params: Params;
 
 fn calculateDensity(r_sq: f32) -> f32 {
-  let h_sq: f32 = params.Smoothlen * params.Smoothlen;
-  return params.DensityCoef * (h_sq - r_sq) * (h_sq - r_sq) * (h_sq - r_sq);
+  let h_sq: f32 = params.smoothlen * params.smoothlen;
+  return params.densityCoef * (h_sq - r_sq) * (h_sq - r_sq) * (h_sq - r_sq);
 }
 
 @compute @workgroup_size(64)

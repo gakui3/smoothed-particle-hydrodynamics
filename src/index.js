@@ -124,6 +124,7 @@ const depthTexture = device.createTexture({
   usage: GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
+//----------buffersの作成----------------
 const uniformBufferSize =
   4 * 4 * 4 + // modelViewProjectionMatrix : mat4x4f
   3 * 4 + // right : vec3f
@@ -150,39 +151,29 @@ const uniformBindGroup = device.createBindGroup({
 });
 
 //定数用のreadonly bufferを作成
-const paramsBufferSize =
+const computeParamsBufferSize =
   1 * 4 + // Smoothlen:f32
   1 * 4 + // DensityCoef: f32
   2 * 4;
 
-const paramsBuffer = device.createBuffer({
-  size: paramsBufferSize,
-  usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
+const computeParamsBuffer = device.createBuffer({
+  size: computeParamsBufferSize,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 });
 
-const paramsBindGroup = device.createBindGroup({
-  layout: renderPipeline.getBindGroupLayout(1),
-  entries: [
-    {
-      binding: 0,
-      resource: {
-        buffer: paramsBuffer,
-      },
-    },
-  ],
-});
+// const paramsBufferBindGroupLayout = device.createBindGroupLayout({
+//   entries: [
+//     {
+//       binding: 0,
+//       visibility: GPUShaderStage.COMPUTE,
+//       buffer: {
+//         type: "read-only-storage",
+//       },
+//     },
+//   ],
+// });
 
-const paramsBufferBicdGroupLayout = device.createBindGroupLayout({
-  entries: [
-    {
-      binding: 0,
-      visibility: GPUShaderStage.COMPUTE,
-      buffer: {
-        type: "read-only-storage",
-      },
-    },
-  ],
-});
+// -------------------
 
 //描画のためのrenderPassDescriptorを作成
 const renderPassDescriptor = {
@@ -249,22 +240,59 @@ const gui = new GUI();
 gui.add(simulationParams, "simulate");
 gui.add(simulationParams, "deltaTime");
 
-const computePipelineLayout = device.createPipelineLayout({
-  bindGroupLayouts: [paramsBufferBicdGroupLayout],
+const bindGroupLayout = device.createBindGroupLayout({
+  entries: [
+    {
+      binding: 0,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: {type: "uniform"},
+    },
+    {
+      binding: 1,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: {type: "storage"},
+    },
+    {
+      binding: 2,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: {type: "read-only-storage"},
+    },
+  ],
 });
 
-const computePipeline = device.createComputePipeline({
-  layout: "auto",
-  compute: {
-    module: device.createShaderModule({
-      code: particleWGSL,
-    }),
-    entryPoint: "simulate",
-  },
+const pipelineLayout = device.createPipelineLayout({
+  bindGroupLayouts: [bindGroupLayout],
+});
+
+const computeBindGroup = device.createBindGroup({
+  layout: bindGroupLayout,
+  entries: [
+    {
+      binding: 0,
+      resource: {
+        buffer: simulationUBOBuffer,
+      },
+    },
+    {
+      binding: 1,
+      resource: {
+        buffer: particlesBuffer,
+        offset: 0,
+        size: numParticles * particleInstanceByteSize,
+      },
+    },
+    {
+      binding: 2,
+      resource: {
+        buffer: computeParamsBuffer,
+        size: computeParamsBufferSize,
+      },
+    },
+  ],
 });
 
 const dencityCalculationPipeline = device.createComputePipeline({
-  layout: "auto",
+  layout: pipelineLayout,
   compute: {
     module: device.createShaderModule({
       code: particleWGSL,
@@ -273,44 +301,14 @@ const dencityCalculationPipeline = device.createComputePipeline({
   },
 });
 
-const computeBindGroup = device.createBindGroup({
-  layout: computePipeline.getBindGroupLayout(0),
-  entries: [
-    {
-      binding: 0,
-      resource: {
-        buffer: simulationUBOBuffer,
-      },
-    },
-    {
-      binding: 1,
-      resource: {
-        buffer: particlesBuffer,
-        offset: 0,
-        size: numParticles * particleInstanceByteSize,
-      },
-    },
-  ],
-});
-
-const dencityCalculationBindGroup = device.createBindGroup({
-  layout: dencityCalculationPipeline.getBindGroupLayout(0),
-  entries: [
-    {
-      binding: 0,
-      resource: {
-        buffer: simulationUBOBuffer,
-      },
-    },
-    {
-      binding: 1,
-      resource: {
-        buffer: particlesBuffer,
-        offset: 0,
-        size: numParticles * particleInstanceByteSize,
-      },
-    },
-  ],
+const computePipeline = device.createComputePipeline({
+  layout: pipelineLayout,
+  compute: {
+    module: device.createShaderModule({
+      code: particleWGSL,
+    }),
+    entryPoint: "simulate",
+  },
 });
 
 const camera = new ArcRotateCamera(Math.PI / 2, Math.PI / 2, 3);
@@ -345,17 +343,16 @@ function frame() {
 
   const commandEncoder = device.createCommandEncoder();
 
-  //パーティクルの位置の計算
+  //密度の計算
   {
     const passEncoder = commandEncoder.beginComputePass();
     passEncoder.setPipeline(dencityCalculationPipeline);
-    passEncoder.setBindGroup(0, dencityCalculationBindGroup);
-    passEncoder.setBindGroup(1, paramsBindGroup);
+    passEncoder.setBindGroup(0, computeBindGroup);
     passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
     passEncoder.end();
   }
 
-  //パーティクルのカラーの計算
+  //mainの計算
   {
     const passEncoder = commandEncoder.beginComputePass();
     passEncoder.setPipeline(computePipeline);
