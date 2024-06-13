@@ -72,15 +72,29 @@ struct Particle {
   lifetime : f32,
   color    : vec4f,
   velocity : vec3f,
+  acceleration : vec3f,
 }
 
 struct Particles {
   particles : array<Particle>,
 }
 
+struct Params {
+    Smoothlen: f32;
+    DensityCoef: f32;
+};
+
 @binding(0) @group(0) var<uniform> sim_params : SimulationParams;
 @binding(1) @group(0) var<storage, read_write> data : Particles;
 @binding(2) @group(0) var texture : texture_2d<f32>;
+
+@group(0) @binding(1)
+var<storage, read> params: Params;
+
+fn calculateDensity(r_sq: f32) -> f32 {
+  let h_sq: f32 = params.Smoothlen * params.Smoothlen;
+  return params.DensityCoef * (h_sq - r_sq) * (h_sq - r_sq) * (h_sq - r_sq);
+}
 
 @compute @workgroup_size(64)
 fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
@@ -102,14 +116,38 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
   if (particle.lifetime < 0.0) {
     let uv = vec2f(0.0, 0.0);
-    particle.position = vec3f(0.0, 0.5, 0.0);//vec3f((uv - 0.5) * 3.0 * vec2f(1.0, -1.0), 0.0);
-    particle.color = vec4f(1.0, 1.0, 1.0, 1.0);
-    particle.velocity.x = (rand() - 0.5) * 0.5;
+    particle.position = vec3f(0.0, 1.0, 0.0);//vec3f((uv - 0.5) * 3.0 * vec2f(1.0, -1.0), 0.0);
+    particle.color = vec4f(0.0, 1.0, 0.0, 1.0);
+    particle.velocity.x = rand()*0.25 + 0.1;//(rand() - 0.5);
     particle.velocity.y = rand() * 0.3;
-    particle.velocity.z = (rand() - 0.5) * 0.5;
-    particle.lifetime = 0.5 + rand() * 3.0;
+    particle.velocity.z = 0;//(rand() - 0.5);
+    particle.lifetime = 0.5 + rand() * 6.0;
   }
 
   // 新しい粒子値を保存します
+  data.particles[idx] = particle;
+}
+
+@compute @workgroup_size(64)
+fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
+  let idx = global_invocation_id.x;
+  let s = sim_params.seed;
+  
+  var particle = data.particles[idx];
+  var density: f32 = 0.0;
+
+  for (var i = 0u; i < 1024u; i= i + 1u) {
+    if(i == idx) {
+      continue;
+    }
+    let p = data.particles[i];
+
+    let diff: vec3<f32> = p.position - particle.position;
+    let r2: f32 = dot(diff, diff);
+    if (r2 < 0.0001) {
+      density += calculateDensity(r2);
+    }
+  }
+
   data.particles[idx] = particle;
 }

@@ -5,7 +5,7 @@ import {ArcRotateCamera} from "./arcRotateCamera.js";
 import particleWGSL from "./shaders/particle.wgsl?raw";
 import probabilityMapWGSL from "./shaders/probabilityMap.wgsl?raw";
 
-const numParticles = 10000;
+const numParticles = 1024;
 const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
 const particleInstanceByteSize =
@@ -13,7 +13,8 @@ const particleInstanceByteSize =
   1 * 4 + // lifetime
   4 * 4 + // color
   3 * 4 + // velocity
-  1 * 4 + // padding
+  3 * 4 + // acceleration
+  2 * 4 + // padding : ここでバッファのサイズを16byteの倍数に調整している
   0;
 
 const canvas = document.querySelector("canvas");
@@ -35,6 +36,11 @@ context.configure({
 
 const particlesBuffer = device.createBuffer({
   size: numParticles * particleInstanceByteSize,
+  usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE,
+});
+
+const particlesDensityBuffer = device.createBuffer({
+  size: numParticles * 4,
   usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE,
 });
 
@@ -143,6 +149,41 @@ const uniformBindGroup = device.createBindGroup({
   ],
 });
 
+//定数用のreadonly bufferを作成
+const paramsBufferSize =
+  1 * 4 + // Smoothlen:f32
+  1 * 4 + // DensityCoef: f32
+  2 * 4;
+
+const paramsBuffer = device.createBuffer({
+  size: paramsBufferSize,
+  usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
+});
+
+const paramsBindGroup = device.createBindGroup({
+  layout: renderPipeline.getBindGroupLayout(1),
+  entries: [
+    {
+      binding: 0,
+      resource: {
+        buffer: paramsBuffer,
+      },
+    },
+  ],
+});
+
+const paramsBufferBicdGroupLayout = device.createBindGroupLayout({
+  entries: [
+    {
+      binding: 0,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: {
+        type: "read-only-storage",
+      },
+    },
+  ],
+});
+
 //描画のためのrenderPassDescriptorを作成
 const renderPassDescriptor = {
   colorAttachments: [
@@ -194,7 +235,6 @@ const simulationParams = {
   simulate: true,
   deltaTime: 0.04,
 };
-
 const simulationUBOBufferSize =
   1 * 4 + // deltaTime
   3 * 4 + // padding
@@ -209,6 +249,10 @@ const gui = new GUI();
 gui.add(simulationParams, "simulate");
 gui.add(simulationParams, "deltaTime");
 
+const computePipelineLayout = device.createPipelineLayout({
+  bindGroupLayouts: [paramsBufferBicdGroupLayout],
+});
+
 const computePipeline = device.createComputePipeline({
   layout: "auto",
   compute: {
@@ -218,6 +262,17 @@ const computePipeline = device.createComputePipeline({
     entryPoint: "simulate",
   },
 });
+
+const dencityCalculationPipeline = device.createComputePipeline({
+  layout: "auto",
+  compute: {
+    module: device.createShaderModule({
+      code: particleWGSL,
+    }),
+    entryPoint: "densityCS",
+  },
+});
+
 const computeBindGroup = device.createBindGroup({
   layout: computePipeline.getBindGroupLayout(0),
   entries: [
@@ -238,7 +293,27 @@ const computeBindGroup = device.createBindGroup({
   ],
 });
 
-const camera = new ArcRotateCamera(Math.PI / 4, Math.PI / 4, 3);
+const dencityCalculationBindGroup = device.createBindGroup({
+  layout: dencityCalculationPipeline.getBindGroupLayout(0),
+  entries: [
+    {
+      binding: 0,
+      resource: {
+        buffer: simulationUBOBuffer,
+      },
+    },
+    {
+      binding: 1,
+      resource: {
+        buffer: particlesBuffer,
+        offset: 0,
+        size: numParticles * particleInstanceByteSize,
+      },
+    },
+  ],
+});
+
+const camera = new ArcRotateCamera(Math.PI / 2, Math.PI / 2, 3);
 camera.attachControl(canvas);
 
 function frame() {
@@ -269,6 +344,18 @@ function frame() {
   renderPassDescriptor.colorAttachments[0].view = swapChainTexture.createView();
 
   const commandEncoder = device.createCommandEncoder();
+
+  //パーティクルの位置の計算
+  {
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(dencityCalculationPipeline);
+    passEncoder.setBindGroup(0, dencityCalculationBindGroup);
+    passEncoder.setBindGroup(1, paramsBindGroup);
+    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+    passEncoder.end();
+  }
+
+  //パーティクルのカラーの計算
   {
     const passEncoder = commandEncoder.beginComputePass();
     passEncoder.setPipeline(computePipeline);
