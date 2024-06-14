@@ -10,11 +10,12 @@ const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
 const particleInstanceByteSize =
   3 * 4 + // position
-  1 * 4 + // lifetime
+  1 * 4 + // padding
   4 * 4 + // color
   3 * 4 + // velocity
+  1 * 4 + // padding
   3 * 4 + // acceleration
-  2 * 4 + // padding : ここでバッファのサイズを16byteの倍数に調整している
+  1 * 4 + // padding : ここでバッファのサイズを16byteの倍数に調整している
   0;
 
 const canvas = document.querySelector("canvas");
@@ -209,9 +210,17 @@ const simulationUBOBufferSize =
   4 * 4 + // seed
   1 * 4 + // Smoothlen:f32
   1 * 4 + // DensityCoef: f32
+  1 * 4 + //gradPressureCoef : f32
+  1 * 4 + // LapPressureCoef: f32
   1 * 4 + // PressureStiffness: f32
-  1 * 4; // RestDensity: f32
-// 2 * 4; // padding
+  1 * 4 + // RestDensity: f32
+  1 * 4 + // ParticleMass: f32
+  1 * 4 + // Viscosity: f32
+  1 * 4 + //wallStiffness: f32
+  1 * 4 + //itteration: i32
+  2 * 4 + //gravity: vec2f
+  2 * 4 + // range: vec2f
+  2 * 4; // padding
 const simulationUBOBuffer = device.createBuffer({
   size: simulationUBOBufferSize,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -296,6 +305,22 @@ function frame() {
       Math.random() * 100, // seed.xy
       1 + Math.random(),
       1 + Math.random(), // seed.zw
+      0.012, // Smoothlen
+      999, // DensityCoef
+      999, // gradPressureCoef
+      999, // LapPressureCoef
+      200.0, // PressureStiffness
+      1000.0, // RestDensity
+      0.0002, // ParticleMass
+      0.1, // Viscosity
+      3000.0, // wallStiffness
+      4, // itteration
+      0.0,
+      -0.5, // gravity
+      1.0,
+      1.0, // range
+      0.0,
+      0.0, // padding
     ])
   );
 

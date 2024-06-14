@@ -67,8 +67,16 @@ struct SimulationParams {
   seed : vec4f,
   smoothlen: f32,
   densityCoef: f32,
+  gradPressureCoef: f32,
+  lapViscosityCoef: f32,
   pressureStiffness: f32,
   restDensity: f32,
+  particleMass: f32,
+  viscosity: f32,
+  wallStiffness: f32,
+  iterations: u32,
+  gravity: vec2f,
+  range: vec2f,
 }
 
 struct Particle {
@@ -96,6 +104,23 @@ fn calculatePressure(density: f32) -> f32 {
 }
 
 @compute @workgroup_size(64)
+fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
+  let idx = global_invocation_id.x;
+
+  init_rand(idx, params.seed);
+
+  var particle = Particle(
+    position = vec3f(0.0, 1.0, 0.0),
+    lifetime = 1.0,
+    color = vec4f(0.0, 1.0, 0.0, 1.0),
+    velocity = vec3f(rand()*0.25 + 0.1, rand() * 0.3, 0.0),
+    acceleration = vec3f(0.0, 0.0, 0.0)
+  );
+
+  data.particles[idx] = particle;
+}
+
+@compute @workgroup_size(64)
 fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
 
@@ -110,18 +135,17 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   particle.position = particle.position + params.deltaTime * particle.velocity;
 
   // 各粒子を老化させます。消える前にフェードアウト。
-  particle.lifetime = particle.lifetime - params.deltaTime;
-  particle.color.a = smoothstep(0.0, 0.5, particle.lifetime);
+  // particle.lifetime = particle.lifetime - params.deltaTime;
+  // particle.color.a = smoothstep(0.0, 0.5, particle.lifetime);
 
-  if (particle.lifetime < 0.0) {
-    let uv = vec2f(0.0, 0.0);
-    particle.position = vec3f(0.0, 1.0, 0.0);//vec3f((uv - 0.5) * 3.0 * vec2f(1.0, -1.0), 0.0);
-    particle.color = vec4f(0.0, 1.0, 0.0, 1.0);
-    particle.velocity.x = rand()*0.25 + 0.1;//(rand() - 0.5);
-    particle.velocity.y = rand() * 0.3;
-    particle.velocity.z = 0;//(rand() - 0.5);
-    particle.lifetime = 0.5 + rand() * 6.0;
-  }
+  // if (particle.lifetime < 0.0) {
+  //   let uv = vec2f(0.0, 0.0);
+  //   particle.position = vec3f(0.0, 1.0, 0.0);//vec3f((uv - 0.5) * 3.0 * vec2f(1.0, -1.0), 0.0);
+  //   particle.color = vec4f(0.0, 1.0, 0.0, 1.0);
+  //   particle.velocity.x = rand()*0.25 + 0.1;//(rand() - 0.5);
+  //   particle.velocity.y = rand() * 0.3;
+  //   particle.velocity.z = 0;//(rand() - 0.5);
+  // }
 
   // 新しい粒子値を保存します
   data.particles[idx] = particle;
