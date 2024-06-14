@@ -81,7 +81,6 @@ struct SimulationParams {
 
 struct Particle {
   position : vec3f,
-  lifetime : f32,
   color    : vec4f,
   velocity : vec3f,
   acceleration : vec3f,
@@ -106,16 +105,14 @@ fn calculatePressure(density: f32) -> f32 {
 @compute @workgroup_size(64)
 fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
-
+  var particle = data.particles[idx];
   init_rand(idx, params.seed);
 
-  var particle = Particle(
-    position = vec3f(0.0, 1.0, 0.0),
-    lifetime = 1.0,
-    color = vec4f(0.0, 1.0, 0.0, 1.0),
-    velocity = vec3f(rand()*0.25 + 0.1, rand() * 0.3, 0.0),
-    acceleration = vec3f(0.0, 0.0, 0.0)
-  );
+  particle.position = vec3f(0.0, 1.0, 0.0);
+  // particle.lifetime = 1.0;
+  particle.color = vec4f(1.0, 1.0, 1.0, 1.0);
+  particle.velocity = vec3f(rand()*0.5 + 0.1, rand() * 0.3, 0.0);
+  particle.acceleration = vec3f(0.0, 0.0, 0.0);
 
   data.particles[idx] = particle;
 }
@@ -133,19 +130,6 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
   // 基本的な速度統合
   particle.position = particle.position + params.deltaTime * particle.velocity;
-
-  // 各粒子を老化させます。消える前にフェードアウト。
-  // particle.lifetime = particle.lifetime - params.deltaTime;
-  // particle.color.a = smoothstep(0.0, 0.5, particle.lifetime);
-
-  // if (particle.lifetime < 0.0) {
-  //   let uv = vec2f(0.0, 0.0);
-  //   particle.position = vec3f(0.0, 1.0, 0.0);//vec3f((uv - 0.5) * 3.0 * vec2f(1.0, -1.0), 0.0);
-  //   particle.color = vec4f(0.0, 1.0, 0.0, 1.0);
-  //   particle.velocity.x = rand()*0.25 + 0.1;//(rand() - 0.5);
-  //   particle.velocity.y = rand() * 0.3;
-  //   particle.velocity.z = 0;//(rand() - 0.5);
-  // }
 
   // 新しい粒子値を保存します
   data.particles[idx] = particle;
@@ -179,5 +163,32 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   //     particle.color = vec4f(1.0, 0.0, 0.0, 1.0);
   // }
 
+  data.particles[idx] = particle;
+}
+
+@compute @workgroup_size(64)
+fn pressureCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
+  let idx = global_invocation_id.x;
+  let s = params.seed;
+  
+  var particle = data.particles[idx];
+  var density: f32 = 0.0;
+  var pressure: f32 = 0.0;
+  var gradPressure: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+
+  for (var i = 0u; i < 1024u; i= i + 1u) {
+    if(i == idx) {
+      continue;
+    }
+    let p = data.particles[i];
+
+    let diff: vec3<f32> = p.position - particle.position;
+    let r2: f32 = dot(diff, diff);
+    density += calculateDensity(r2);
+    pressure += calculatePressure(density);
+    gradPressure += diff * (params.gradPressureCoef * (calculateDensity(r2) + calculateDensity(r2)));
+  }
+
+  particle.acceleration = gradPressure / density;
   data.particles[idx] = particle;
 }
