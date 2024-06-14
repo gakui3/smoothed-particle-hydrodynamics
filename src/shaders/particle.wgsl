@@ -84,6 +84,7 @@ struct Particle {
   color    : vec4f,
   velocity : vec3f,
   acceleration : vec3f,
+  density : f32,
 }
 
 struct Particles {
@@ -131,6 +132,8 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   // 基本的な速度統合
   particle.position = particle.position + params.deltaTime * particle.velocity;
 
+  particle.color = vec4f(particle.density, 1.0, 0.0, 1.0);
+
   // 新しい粒子値を保存します
   data.particles[idx] = particle;
 }
@@ -153,9 +156,9 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
     let r2: f32 = dot(diff, diff);
     if (rand() < 0.1) {
       density += calculateDensity(r2);
-      particle.color = vec4f(1.0, 0.0, 0.0, 1.0);
     }
   }
+  particle.density = density;
 
   // init_rand(idx, params.seed);
   // let v: f32 = rand();

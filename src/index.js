@@ -5,13 +5,35 @@ import {ArcRotateCamera} from "./arcRotateCamera.js";
 import particleWGSL from "./shaders/particle.wgsl?raw";
 import probabilityMapWGSL from "./shaders/probabilityMap.wgsl?raw";
 
+//--------------------------------------------------------------------------------------
+// パラメータの設定
+//--------------------------------------------------------------------------------------
 const numParticles = 1024;
 const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
 
-/**
- * 初期化の処理
- */
+const seed = [
+  Math.random() * 100,
+  Math.random() * 100,
+  1 + Math.random(),
+  1 + Math.random(),
+];
+const smoothlen = 0.012;
+const densityCoef = 999;
+const gradPressureCoef = 999;
+const lapPressureCoef = 999;
+const pressureStiffness = 200.0;
+const restDensity = 1000.0;
+const particleMass = 0.0002;
+const viscosity = 0.1;
+const wallStiffness = 3000.0;
+const iteration = 4;
+const gravity = [0.0, -0.5];
+const range = [1.0, 1.0];
+
+//--------------------------------------------------------------------------------------
+// 初期化の処理
+//--------------------------------------------------------------------------------------
 // Buffer Sizeの定義
 const simulationUBOBufferSize =
   1 * 4 + // deltaTime
@@ -33,12 +55,11 @@ const simulationUBOBufferSize =
 
 const particleInstanceByteSize =
   3 * 4 + // position
-  1 * 4 + // padding
   4 * 4 + // color
   3 * 4 + // velocity
-  1 * 4 + // padding
   3 * 4 + // acceleration
-  1 * 4 + // padding : ここでバッファのサイズを16byteの倍数に調整している
+  1 * 4 + // density
+  2 * 4 + // padding
   0;
 
 const uniformBufferSize =
@@ -83,9 +104,9 @@ const gui = new GUI();
 gui.add(simulationParams, "simulate");
 gui.add(simulationParams, "deltaTime");
 
-/**
- * Bufferの作成
- */
+//--------------------------------------------------------------------------------------
+// Bufferの作成
+//--------------------------------------------------------------------------------------
 // particlesのbuffer
 const particlesBuffer = device.createBuffer({
   size: numParticles * particleInstanceByteSize,
@@ -111,9 +132,9 @@ const simulationUBOBuffer = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-/**
- * レンダリング周りの設定
- */
+//--------------------------------------------------------------------------------------
+// レンダリング周りの設定
+//--------------------------------------------------------------------------------------
 const renderPipeline = device.createRenderPipeline({
   layout: "auto",
   vertex: {
@@ -245,9 +266,9 @@ const vertexData = [
 new Float32Array(quadVertexBuffer.getMappedRange()).set(vertexData);
 quadVertexBuffer.unmap();
 
-/**
- * Compute Shader周りの設定
- */
+//--------------------------------------------------------------------------------------
+// Compute Shader周りの設定
+//--------------------------------------------------------------------------------------
 // bindGroupLayoutの作成
 const bindGroupLayout = device.createBindGroupLayout({
   entries: [
@@ -321,9 +342,6 @@ const initPipeline = device.createComputePipeline({
 });
 
 // バッファの初期化
-/**
- * 定数用のバッファに値を書き込み
- */
 device.queue.writeBuffer(
   simulationUBOBuffer,
   0,
@@ -332,32 +350,29 @@ device.queue.writeBuffer(
     0.0,
     0.0,
     0.0, // padding
-    Math.random() * 100,
-    Math.random() * 100, // seed.xy
-    1 + Math.random(),
-    1 + Math.random(), // seed.zw
-    0.012, // Smoothlen
-    999, // DensityCoef
-    999, // gradPressureCoef
-    999, // LapPressureCoef
-    200.0, // PressureStiffness
-    1000.0, // RestDensity
-    0.0002, // ParticleMass
-    0.1, // Viscosity
-    3000.0, // wallStiffness
-    4, // itteration
-    0.0,
-    -0.5, // gravity
-    1.0,
-    1.0, // range
+    seed[0],
+    seed[1], // seed.xy
+    seed[2],
+    seed[3], // seed.zw
+    smoothlen,
+    densityCoef,
+    gradPressureCoef,
+    lapPressureCoef,
+    pressureStiffness,
+    restDensity,
+    particleMass,
+    viscosity,
+    wallStiffness,
+    iteration,
+    gravity[0],
+    gravity[1],
+    range[0],
+    range[1], // range
     0.0,
     0.0, // padding
   ])
 );
 
-/**
- * パーティクルバッファの初期化
- */
 {
   const commandEncoder = device.createCommandEncoder();
   const passEncoder = commandEncoder.beginComputePass();
@@ -368,9 +383,9 @@ device.queue.writeBuffer(
   device.queue.submit([commandEncoder.finish()]);
 }
 
-/**
- * メインループ
- */
+//--------------------------------------------------------------------------------------
+// メインループ
+//--------------------------------------------------------------------------------------
 function frame() {
   // 描画用のバッファにデータを書き込み
   device.queue.writeBuffer(
