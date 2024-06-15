@@ -93,7 +93,8 @@ struct Particles {
 }
 
 @binding(0) @group(0) var<uniform> params : SimulationParams;
-@binding(1) @group(0) var<storage, read_write> data : Particles;
+@binding(1) @group(0) var<storage, read_write> dataRead : Particles;
+@binding(2) @group(0) var<storage, read_write> dataWrite : Particles;
 
 fn calculateDensity(r_sq: f32) -> f32 {
   let h_sq: f32 = params.smoothlen * params.smoothlen;
@@ -119,49 +120,56 @@ fn calculateLapVelocity(r: f32, P_velocity: vec2<f32>, N_velocity: vec2<f32>, N_
 @compute @workgroup_size(64)
 fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
-  var particle = data.particles[idx];
+  var particle = dataRead.particles[idx];
   init_rand(idx, params.seed);
 
-  particle.position = vec3f(rand()*2.0-1.0, rand()+1.0, 0.0);
-  // particle.lifetime = 1.0;
+  // ランダムな角度と半径を生成
+  let angle = rand() * 2.0 * 3.141592;
+  let radius = sqrt(rand()) * 2.0; // 半径5の円内にランダムに分布
+
+  // デカルト座標に変換
+  let x = radius * cos(angle);
+  let y = radius * sin(angle);
+
+  // 初期位置を円内のランダムな位置に設定
+  particle.position = vec3f(x, y, 0.0) + vec3f(2.0, 5.0, 0.0);
   particle.color = vec4f(1.0, 1.0, 1.0, 1.0);
   particle.velocity = vec3f(0.0, 0.0, 0.0);
   particle.acceleration = vec3f(0.0, 0.0, 0.0);
 
-  data.particles[idx] = particle;
+  dataRead.particles[idx] = particle;
 }
 
 @compute @workgroup_size(64)
 fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
 
-  var particle = data.particles[idx];
-  var position = particle.position;
+  var particle = dataRead.particles[idx];
+  var position = vec3f(particle.position.x, particle.position.y, 1.0);
   var velocity = particle.velocity;
   var acceleration = particle.acceleration;
 
-  // x方向の壁境界
+
   var dist = dot(position, vec3f(1.0, 0.0, 0.0));
-  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(1.0, 0.0), 0.0);
+  acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(1.0, 0.0), 0.0);
+
+  dist = dot(position, vec3f(0.0, 1.0, 0.0));
+  acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, 1.0), 0.0);
 
   dist = dot(position, vec3f(-1.0, 0.0, params.range.x));
-  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(-1.0, 0.0), 0.0);
-
-  // y方向の壁境界
-  dist = dot(position, vec3f(0.0, 1.0, 0.0));
-  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, 1.0), 0.0);
+  acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(-1.0, 0.0), 0.0);
 
   dist = dot(position, vec3f(0.0, -1.0, params.range.y));
   // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, -1.0), 0.0);
 
   // // 重力を適用します
   acceleration += vec3f(params.gravity.x, params.gravity.y, 0.0);
-  // acceleration = vec3f(0.0, -1.0, 0.0);
 
   // // 基本的な速度統合
-  // velocity += vec3f(0.0, -1.0, 0.0) * params.deltaTime;
   velocity += acceleration * params.deltaTime;
   position += velocity * params.deltaTime;
+
+  position.z = 0.0;
 
   // // 粒子の位置を更新します
   particle.position = position;
@@ -169,7 +177,7 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   particle.color = vec4f(particle.density, 1.0, 0.0, 1.0);
 
   // 新しい粒子値を保存します
-  data.particles[idx] = particle;
+  dataWrite.particles[idx] = particle;
 }
 
 @compute @workgroup_size(64)
@@ -177,16 +185,16 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
   let s = params.seed;
   
-  var particle = data.particles[idx];
+  var particle = dataRead.particles[idx];
 
   var h_sq: f32 = params.smoothlen * params.smoothlen;
   var density: f32 = 0.0;
 
-  for (var i = 0u; i < arrayLength(&data.particles); i= i + 1u) {
+  for (var i = 0u; i < arrayLength(&dataRead.particles); i= i + 1u) {
     if(i == idx) {
       continue;
     }
-    let p = data.particles[i];
+    let p = dataRead.particles[i];
 
     let diff: vec3f = p.position - particle.position;
     let r2: f32 = dot(diff, diff);
@@ -195,27 +203,27 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
     }
   }
   particle.density = density;
-  data.particles[idx] = particle;
+  dataWrite.particles[idx] = particle;
 }
 
 @compute @workgroup_size(64)
 fn pressureCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
 
-  var particle = data.particles[idx];
+  var particle = dataRead.particles[idx];
 
   var density: f32 = particle.density;
-	var pressure: f32 = calculatePressure(density);	// 圧力の計算
+	var pressure: f32 = calculatePressure(density);
 
 	particle.pressure = pressure;
-  data.particles[idx] = particle;
+  dataWrite.particles[idx] = particle;
 }
 
 @compute @workgroup_size(64)
 fn forceCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
 
-  var particle = data.particles[idx];
+  var particle = dataRead.particles[idx];
 
   var position: vec3f = particle.position;
   var velocity: vec3f = particle.velocity;
@@ -227,19 +235,19 @@ fn forceCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   var press: vec2<f32> = vec2<f32>(0.0, 0.0);
   var visco: vec2<f32> = vec2<f32>(0.0, 0.0);
 
-  for (var i = 0u; i < arrayLength(&data.particles); i= i + 1u) {
+  for (var i = 0u; i < arrayLength(&dataRead.particles); i= i + 1u) {
     if(i == idx) {
       continue;
     }
-    let p = data.particles[i];
+    let p = dataRead.particles[i];
 
     let diff: vec3f = p.position - position;
     let r2: f32 = dot(diff, diff);
 
     if (r2 < h_sq) {
-      var i_density: f32 = data.particles[i].density;
-			var i_pressure: f32 = data.particles[i].pressure;
-			var i_velocity: vec2<f32> = data.particles[i].velocity.xy;
+      var i_density: f32 = p.density;
+			var i_pressure: f32 = p.pressure;
+			var i_velocity: vec2<f32> = p.velocity.xy;
 			var r: f32 = sqrt(r2);
 
 			// 圧力項
@@ -251,8 +259,16 @@ fn forceCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   }
 
   var force: vec2<f32> = press + params.viscosity * visco;
-  var acceleration: vec2<f32> = force / density;
+  var acceleration: vec2<f32> = force / (density);
 
   particle.acceleration = vec3f(acceleration.x, acceleration.y, 0.0);
-  data.particles[idx] = particle;
+  dataWrite.particles[idx] = particle;
+}
+
+@compute @workgroup_size(64)
+fn swapBuffer(@builtin(global_invocation_id) global_invocation_id : vec3u) {
+  let idx = global_invocation_id.x;
+  var particle = dataWrite.particles[idx];
+
+  dataRead.particles[idx] = particle;
 }

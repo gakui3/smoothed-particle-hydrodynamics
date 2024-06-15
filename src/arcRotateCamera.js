@@ -6,7 +6,7 @@ export class ArcRotateCamera {
     this.beta = beta;
     this.radius = radius;
     this.target = vec3.create();
-    vec3.set(this.target, target[0], target[1], target[2]);
+    vec3.set(target[0], target[1], target[2], this.target);
     this.cameraPosition = vec3.create();
     this.isDragging = false;
     this.lastMouseX = 0;
