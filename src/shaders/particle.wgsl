@@ -85,6 +85,7 @@ struct Particle {
   velocity : vec3f,
   acceleration : vec3f,
   density : f32,
+  pressure : f32,
 }
 
 struct Particles {
@@ -103,16 +104,28 @@ fn calculatePressure(density: f32) -> f32 {
   return params.pressureStiffness * max(pow(density / params.restDensity, 7.0) - 1.0, 0.0);
 }
 
+fn calculateGradPressure(r: f32, P_pressure: f32, N_pressure: f32, N_density: f32, diff: vec2<f32>) -> vec2<f32> {
+  let h: f32 = params.smoothlen;
+  let avg_pressure: f32 = 0.5 * (N_pressure + P_pressure);
+  return params.gradPressureCoef * avg_pressure / N_density * (h - r) * (h - r) / r * diff;
+}
+
+fn calculateLapVelocity(r: f32, P_velocity: vec2<f32>, N_velocity: vec2<f32>, N_density: f32) -> vec2<f32> {
+  let h: f32 = params.smoothlen;
+  let vel_diff: vec2<f32> = N_velocity - P_velocity;
+  return params.lapViscosityCoef / N_density * (h - r) * vel_diff;
+}
+
 @compute @workgroup_size(64)
 fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
   var particle = data.particles[idx];
   init_rand(idx, params.seed);
 
-  particle.position = vec3f(0.0, 1.0, 0.0);
+  particle.position = vec3f(rand()*2.0-1.0, rand()+1.0, 0.0);
   // particle.lifetime = 1.0;
   particle.color = vec4f(1.0, 1.0, 1.0, 1.0);
-  particle.velocity = vec3f(rand()*0.5 + 0.1, rand() * 0.3, 0.0);
+  particle.velocity = vec3f(0.0, 0.0, 0.0);
   particle.acceleration = vec3f(0.0, 0.0, 0.0);
 
   data.particles[idx] = particle;
@@ -122,16 +135,37 @@ fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
 
-  init_rand(idx, params.seed);
-
   var particle = data.particles[idx];
+  var position = particle.position;
+  var velocity = particle.velocity;
+  var acceleration = particle.acceleration;
 
-  // 重力を適用します
-  particle.velocity.y = particle.velocity.y - params.deltaTime * 0.5;
+  // x方向の壁境界
+  var dist = dot(position, vec3f(1.0, 0.0, 0.0));
+  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(1.0, 0.0), 0.0);
 
-  // 基本的な速度統合
-  particle.position = particle.position + params.deltaTime * particle.velocity;
+  dist = dot(position, vec3f(-1.0, 0.0, params.range.x));
+  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(-1.0, 0.0), 0.0);
 
+  // y方向の壁境界
+  dist = dot(position, vec3f(0.0, 1.0, 0.0));
+  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, 1.0), 0.0);
+
+  dist = dot(position, vec3f(0.0, -1.0, params.range.y));
+  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, -1.0), 0.0);
+
+  // // 重力を適用します
+  acceleration += vec3f(params.gravity.x, params.gravity.y, 0.0);
+  // acceleration = vec3f(0.0, -1.0, 0.0);
+
+  // // 基本的な速度統合
+  // velocity += vec3f(0.0, -1.0, 0.0) * params.deltaTime;
+  velocity += acceleration * params.deltaTime;
+  position += velocity * params.deltaTime;
+
+  // // 粒子の位置を更新します
+  particle.position = position;
+  particle.velocity = velocity;
   particle.color = vec4f(particle.density, 1.0, 0.0, 1.0);
 
   // 新しい粒子値を保存します
@@ -144,54 +178,81 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let s = params.seed;
   
   var particle = data.particles[idx];
+
+  var h_sq: f32 = params.smoothlen * params.smoothlen;
   var density: f32 = 0.0;
 
-  for (var i = 0u; i < 1024u; i= i + 1u) {
+  for (var i = 0u; i < arrayLength(&data.particles); i= i + 1u) {
     if(i == idx) {
       continue;
     }
     let p = data.particles[i];
 
-    let diff: vec3<f32> = p.position - particle.position;
+    let diff: vec3f = p.position - particle.position;
     let r2: f32 = dot(diff, diff);
-    if (rand() < 0.1) {
+    if (r2 < h_sq) {
       density += calculateDensity(r2);
     }
   }
   particle.density = density;
-
-  // init_rand(idx, params.seed);
-  // let v: f32 = rand();
-  // if (v < 0.05) {
-  //     particle.color = vec4f(1.0, 0.0, 0.0, 1.0);
-  // }
-
   data.particles[idx] = particle;
 }
 
 @compute @workgroup_size(64)
 fn pressureCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   let idx = global_invocation_id.x;
-  let s = params.seed;
-  
-  var particle = data.particles[idx];
-  var density: f32 = 0.0;
-  var pressure: f32 = 0.0;
-  var gradPressure: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
 
-  for (var i = 0u; i < 1024u; i= i + 1u) {
+  var particle = data.particles[idx];
+
+  var density: f32 = particle.density;
+	var pressure: f32 = calculatePressure(density);	// 圧力の計算
+
+	particle.pressure = pressure;
+  data.particles[idx] = particle;
+}
+
+@compute @workgroup_size(64)
+fn forceCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
+  let idx = global_invocation_id.x;
+
+  var particle = data.particles[idx];
+
+  var position: vec3f = particle.position;
+  var velocity: vec3f = particle.velocity;
+  var density: f32 = particle.density;
+  var pressure: f32 = particle.pressure;
+
+  let h_sq = params.smoothlen * params.smoothlen;
+
+  var press: vec2<f32> = vec2<f32>(0.0, 0.0);
+  var visco: vec2<f32> = vec2<f32>(0.0, 0.0);
+
+  for (var i = 0u; i < arrayLength(&data.particles); i= i + 1u) {
     if(i == idx) {
       continue;
     }
     let p = data.particles[i];
 
-    let diff: vec3<f32> = p.position - particle.position;
+    let diff: vec3f = p.position - position;
     let r2: f32 = dot(diff, diff);
-    density += calculateDensity(r2);
-    pressure += calculatePressure(density);
-    gradPressure += diff * (params.gradPressureCoef * (calculateDensity(r2) + calculateDensity(r2)));
+
+    if (r2 < h_sq) {
+      var i_density: f32 = data.particles[i].density;
+			var i_pressure: f32 = data.particles[i].pressure;
+			var i_velocity: vec2<f32> = data.particles[i].velocity.xy;
+			var r: f32 = sqrt(r2);
+
+			// 圧力項
+      press += calculateGradPressure(r, pressure, i_pressure, i_density, diff.xy);
+
+			// 粘性項
+			visco += calculateLapVelocity(r, velocity.xy, i_velocity, i_density);
+    }
   }
 
-  particle.acceleration = gradPressure / density;
+  var force: vec2<f32> = press + params.viscosity * visco;
+  var acceleration: vec2<f32> = force / density;
+
+  particle.acceleration = vec3f(acceleration.x, acceleration.y, 0.0);
   data.particles[idx] = particle;
 }

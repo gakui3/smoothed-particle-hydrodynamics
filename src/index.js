@@ -1,6 +1,7 @@
 import {mat4, vec3} from "wgpu-matrix";
 import {GUI} from "dat.gui";
 import {ArcRotateCamera} from "./arcRotateCamera.js";
+import Stats from "stats-js";
 
 import particleWGSL from "./shaders/particle.wgsl?raw";
 import probabilityMapWGSL from "./shaders/probabilityMap.wgsl?raw";
@@ -19,17 +20,20 @@ const seed = [
   1 + Math.random(),
 ];
 const smoothlen = 0.012;
-const densityCoef = 999;
-const gradPressureCoef = 999;
-const lapPressureCoef = 999;
 const pressureStiffness = 200.0;
 const restDensity = 1000.0;
 const particleMass = 0.0002;
 const viscosity = 0.1;
 const wallStiffness = 3000.0;
 const iteration = 4;
-const gravity = [0.0, -0.5];
+const gravity = [0.0, 0.0];
 const range = [1.0, 1.0];
+
+const densityCoef = (particleMass * 4.0) / (Math.PI * Math.pow(smoothlen, 8.0));
+const gradPressureCoef =
+  (particleMass * -30.0) / (Math.PI * Math.pow(smoothlen, 5.0));
+const lapPressureCoef =
+  (particleMass * 20.0) / (3.0 * Math.PI * Math.pow(smoothlen, 5.0));
 
 //--------------------------------------------------------------------------------------
 // 初期化の処理
@@ -54,13 +58,23 @@ const simulationUBOBufferSize =
   2 * 4; // padding
 
 const particleInstanceByteSize =
+  // 3 * 4 + // position
+  // 4 * 4 + // color
+  // 3 * 4 + // velocity
+  // 3 * 4 + // acceleration
+  // 1 * 4 + // density
+  // 1 * 4 + // pressure
+  // 5 * 4; // padding
   3 * 4 + // position
+  1 * 4 + // padding
   4 * 4 + // color
   3 * 4 + // velocity
+  1 * 4 + // padding
   3 * 4 + // acceleration
+  1 * 4 + // padding
   1 * 4 + // density
-  2 * 4 + // padding
-  0;
+  1 * 4 + // pressure
+  2 * 4; // padding
 
 const uniformBufferSize =
   4 * 4 * 4 + // modelViewProjectionMatrix : mat4x4f
@@ -103,6 +117,10 @@ const simulationParams = {
 const gui = new GUI();
 gui.add(simulationParams, "simulate");
 gui.add(simulationParams, "deltaTime");
+
+const stats = new Stats();
+stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
+document.body.appendChild(stats.dom);
 
 //--------------------------------------------------------------------------------------
 // Bufferの作成
@@ -321,6 +339,16 @@ const dencityCalculationPipeline = device.createComputePipeline({
   },
 });
 
+const pressureCalculationPipeline = device.createComputePipeline({
+  layout: pipelineLayout,
+  compute: {
+    module: device.createShaderModule({
+      code: particleWGSL,
+    }),
+    entryPoint: "pressureCS",
+  },
+});
+
 const computePipeline = device.createComputePipeline({
   layout: pipelineLayout,
   compute: {
@@ -338,6 +366,16 @@ const initPipeline = device.createComputePipeline({
       code: particleWGSL,
     }),
     entryPoint: "init",
+  },
+});
+
+const forceClaclulationPipeline = device.createComputePipeline({
+  layout: pipelineLayout,
+  compute: {
+    module: device.createShaderModule({
+      code: particleWGSL,
+    }),
+    entryPoint: "forceCS",
   },
 });
 
@@ -368,7 +406,7 @@ device.queue.writeBuffer(
     gravity[1],
     range[0],
     range[1], // range
-    0.0,
+    numParticles,
     0.0, // padding
   ])
 );
@@ -387,6 +425,7 @@ device.queue.writeBuffer(
 // メインループ
 //--------------------------------------------------------------------------------------
 function frame() {
+  stats.begin();
   // 描画用のバッファにデータを書き込み
   device.queue.writeBuffer(
     uniformBuffer,
@@ -405,6 +444,24 @@ function frame() {
   {
     const passEncoder = commandEncoder.beginComputePass();
     passEncoder.setPipeline(dencityCalculationPipeline);
+    passEncoder.setBindGroup(0, computeBindGroup);
+    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+    passEncoder.end();
+  }
+
+  //圧力の計算
+  {
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(pressureCalculationPipeline);
+    passEncoder.setBindGroup(0, computeBindGroup);
+    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+    passEncoder.end();
+  }
+
+  //forceの計算
+  {
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(forceClaclulationPipeline);
     passEncoder.setBindGroup(0, computeBindGroup);
     passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
     passEncoder.end();
@@ -432,6 +489,7 @@ function frame() {
 
   device.queue.submit([commandEncoder.finish()]);
 
+  stats.end();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

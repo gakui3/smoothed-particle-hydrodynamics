@@ -2,6 +2,7 @@
   "dependencies": {
     "@vitejs/plugin-basic-ssl": "^1.1.0",
     "dat.gui": "^0.7.9",
+    "stats-js": "^1.0.1",
     "vite": "^5.1.4",
     "wgpu-matrix": "^2.8.0"
   },
