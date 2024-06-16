@@ -40,7 +40,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(in : VertexInput) -> VertexOutput {
   var quad_pos = mat2x3f(render_params.right, render_params.up) * in.quad_pos;
-  var position = in.position + quad_pos * 0.015;
+  var position = in.position + quad_pos * 0.05;
   var out : VertexOutput;
   out.position = render_params.modelViewProjectionMatrix * vec4f(position, 1.0);
   out.color = in.color;
@@ -76,7 +76,8 @@ struct SimulationParams {
   wallStiffness: f32,
   iterations: u32,
   gravity: vec2f,
-  range: vec2f,
+  rangeX: f32,
+  rangeY: f32
 }
 
 struct Particle {
@@ -92,9 +93,15 @@ struct Particles {
   particles : array<Particle>,
 }
 
+struct Mouse {
+  position : vec2f,
+  radius : f32,
+}
+
 @binding(0) @group(0) var<uniform> params : SimulationParams;
 @binding(1) @group(0) var<storage, read_write> dataRead : Particles;
 @binding(2) @group(0) var<storage, read_write> dataWrite : Particles;
+@binding(3) @group(0) var<storage, read_write> mouse : Mouse;
 
 fn calculateDensity(r_sq: f32) -> f32 {
   let h_sq: f32 = params.smoothlen * params.smoothlen;
@@ -121,16 +128,26 @@ fn calculateLapVelocity(r: f32, P_velocity: vec2f, N_velocity: vec2f, N_density:
 fn calculateAcceleration(position: vec3f, velocity: vec3f, acceleration: vec3f) -> vec3f {
   var acc = acceleration;
 
+  let mousePos = mouse.position;
+  let mouseRadius = mouse.radius;
+
+  if (distance(position.xy, mousePos) < mouseRadius && mouseRadius > 0.0) {
+    var dir = position.xy - mousePos;
+    var pushBack = mouseRadius - length(dir);
+    var f = 100.0 * pushBack * normalize(dir);
+    acc += vec3f(f.x, f.y, 0.0);
+  }
+
   var dist = dot(position, vec3f(1.0, 0.0, 0.0));
   acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(1.0, 0.0), 0.0);
 
   dist = dot(position, vec3f(0.0, 1.0, 0.0));
   acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, 1.0), 0.0);
 
-  dist = dot(position, vec3f(-1.0, 0.0, params.range.x));
+  dist = dot(position, vec3f(-1.0, 0.0, params.rangeX));
   acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(-1.0, 0.0), 0.0);
 
-  dist = dot(position, vec3f(0.0, -1.0, params.range.y));
+  dist = dot(position, vec3f(0.0, -1.0, params.rangeY));
   acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, -1.0), 0.0);
 
   acc += vec3f(params.gravity.x, params.gravity.y, 0.0);
@@ -146,14 +163,14 @@ fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
   // ランダムな角度と半径を生成
   let angle = rand() * 2.0 * 3.141592;
-  let radius = sqrt(rand()) * 5.0; // 半径5の円内にランダムに分布
+  let radius = sqrt(rand()) * min(params.rangeX, params.rangeY) / 2.0; // 半径5の円内にランダムに分布
 
   // デカルト座標に変換
   let x = radius * cos(angle);
   let y = radius * sin(angle);
 
   // 初期位置を円内のランダムな位置に設定
-  particle.position = vec3f(x, y, 0.0) + vec3f(8.0, 5.0, 0.0);
+  particle.position = vec3f(x, y, 0.0) + vec3f(params.rangeX / 2.0, params.rangeY / 2.0, 0.0);
   particle.color = vec4f(1.0, 1.0, 1.0, 1.0);
   particle.velocity = vec3f(0.0, 0.0, 0.0);
   particle.acceleration = vec3f(0.0, 0.0, 0.0);
@@ -196,7 +213,7 @@ fn simulate(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
   // 粒子の位置を更新
   particle.position = position;
   particle.velocity = velocity;
-  particle.color = vec4<f32>(particle.density, 1.0, 0.0, 1.0);
+  // particle.color = vec4<f32>(particle.density, 1.0, 0.0, 1.0);
 
   // 新しい粒子値を保存
   dataWrite.particles[idx] = particle;
@@ -220,7 +237,7 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
     let diff: vec3f = p.position - particle.position;
     let r2: f32 = dot(diff, diff);
-    if (r2 < h_sq) {
+    if (r2 < h_sq && r2 > 0.0) {
       density += calculateDensity(r2);
     }
   }
@@ -241,7 +258,6 @@ fn pressureCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
   // var pressure: f32 = 1.0;
 
   particle.pressure = pressure;
-	// particle.pressure = clamp(pressure, -250.0, 250.0);
   dataWrite.particles[idx] = particle;
 }
 
@@ -270,7 +286,7 @@ fn forceCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
     let diff: vec3f = p.position - position;
     let r2: f32 = dot(diff, diff);
 
-    if (r2 < h_sq) {
+    if (r2 < h_sq && r2 > 0.0) {
       var i_density: f32 = p.density;
 			var i_pressure: f32 = p.pressure;
 			var i_velocity: vec2<f32> = p.velocity.xy;

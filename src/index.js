@@ -9,7 +9,7 @@ import particleWGSL from "./shaders/particle.wgsl?raw";
 //--------------------------------------------------------------------------------------
 // パラメータの設定
 //--------------------------------------------------------------------------------------
-const numParticles = 8192;
+const numParticles = 4096; //8192;
 const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
 
@@ -21,7 +21,7 @@ const seed = [
 ];
 
 const gravity = [0.0, -10.0];
-const range = [16.0, 16.0];
+const range = [16.0, 12.0];
 
 const simulationParams = {
   simulate: true,
@@ -31,10 +31,8 @@ const simulationParams = {
   restDensity: 4.0,
   particleMass: 0.08,
   viscosity: 4.0,
-  wallStiffness: 4000.0,
+  wallStiffness: 6000.0,
   iteration: 4,
-  gravity: [0.0, -10.0],
-  range: [16.0, 16.0],
   reset: () => {
     init();
   },
@@ -69,7 +67,8 @@ const simulationUBOBufferSize =
   1 * 4 + //wallStiffness: f32
   1 * 4 + //itteration: i32
   2 * 4 + //gravity: vec2f
-  2 * 4 + // range: vec2f
+  1 * 4 + // rangeX: u32f
+  1 * 4 + // rangeY: u32f
   2 * 4; // padding
 
 const particleInstanceByteSize =
@@ -92,6 +91,12 @@ const uniformBufferSize =
   4 + // padding
   0;
 
+const mouseBufferSize =
+  2 * 4 + //mousePosition : vec2f
+  2 * 4 + // padding
+  1 * 4 + // radius : f32
+  3 * 4; // padding
+
 // canvasやGPUの初期化
 const canvas = document.querySelector("canvas");
 const adapter = await navigator.gpu.requestAdapter();
@@ -107,7 +112,10 @@ const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 // カメラの設定
 // const camera = new ArcRotateCamera(Math.PI / 2, Math.PI / 2, 8.0);
 // camera.attachControl(canvas);
-const camera = new SimpleCamera([8, 5, 10], [8, 5, 0]);
+const camera = new SimpleCamera(
+  [range[0] / 2.0, range[1] / 2.0, 10],
+  [range[0] / 2.0, range[1] / 2.0, 0]
+);
 const mvpMatrix = camera.updateMVPMatrix();
 
 context.configure({
@@ -119,14 +127,14 @@ context.configure({
 // guiの設定
 const gui = new GUI();
 gui.add(simulationParams, "simulate");
-gui.add(simulationParams, "simulationStep", 0.001, 0.03, 0.001);
+gui.add(simulationParams, "simulationStep", 0.001, 0.005, 0.001);
 gui.add(simulationParams, "smoothlen", 0.1, 1.0, 0.1);
 gui.add(simulationParams, "pressureStiffness", 0.1, 1.0, 0.1);
 gui.add(simulationParams, "restDensity", 1.0, 10.0, 1.0);
 gui.add(simulationParams, "particleMass", 0.01, 0.2, 0.01);
 gui.add(simulationParams, "viscosity", 0.1, 10.0, 0.1);
-gui.add(simulationParams, "wallStiffness", 1000.0, 10000.0, 1000.0);
-gui.add(simulationParams, "iteration", 1, 10, 1);
+gui.add(simulationParams, "wallStiffness", 1000.0, 6000.0, 1000.0);
+gui.add(simulationParams, "iteration", 1, 20, 1);
 gui.add(simulationParams, "reset");
 
 gui.onChange(() => {
@@ -175,6 +183,11 @@ const quadVertexBuffer = device.createBuffer({
 const simulationUBOBuffer = device.createBuffer({
   size: simulationUBOBufferSize,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+const mouseBuffer = device.createBuffer({
+  size: mouseBufferSize,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 });
 
 //--------------------------------------------------------------------------------------
@@ -332,6 +345,11 @@ const bindGroupLayout = device.createBindGroupLayout({
       visibility: GPUShaderStage.COMPUTE,
       buffer: {type: "storage"},
     },
+    {
+      binding: 3,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: {type: "storage"},
+    },
   ],
 });
 
@@ -363,6 +381,12 @@ const computeBindGroup = device.createBindGroup({
         buffer: particlesWriteBuffer,
         offset: 0,
         size: numParticles * particleInstanceByteSize,
+      },
+    },
+    {
+      binding: 3,
+      resource: {
+        buffer: mouseBuffer,
       },
     },
   ],
@@ -457,12 +481,40 @@ const setSimulationUBO = () => {
       gravity[1],
       range[0],
       range[1], // range
-      numParticles,
       0.0, // padding
     ])
   );
 };
 setSimulationUBO();
+
+// マウスバッファの初期化
+device.queue.writeBuffer(mouseBuffer, 0, new Float32Array([0.0, 0.0, 0.0]));
+// マウスイベントの設定
+// マウスのドラッグ中はマウスのスクリーン座標をバッファに書き込む
+// マウスを離すとバッファのradiusを0にする
+let isDragging = false;
+
+document.addEventListener("mousedown", function (e) {
+  isDragging = true;
+});
+
+document.addEventListener("mouseup", function (e) {
+  isDragging = false;
+  device.queue.writeBuffer(mouseBuffer, 0, new Float32Array([0.0, 0.0, 0.0]));
+});
+
+document.addEventListener("mousemove", function (e) {
+  if (isDragging) {
+    //マウス座標をワールド座標に変換
+    const wp = camera.screenToWorld(e.clientX, e.clientY, 10.0);
+    const radius = 1.0;
+    device.queue.writeBuffer(
+      mouseBuffer,
+      0,
+      new Float32Array([wp[0], wp[1], radius])
+    );
+  }
+});
 
 const init = () => {
   const commandEncoder = device.createCommandEncoder();
@@ -489,77 +541,78 @@ async function frame() {
   renderPassDescriptor.colorAttachments[0].view = swapChainTexture.createView();
 
   const commandEncoder = device.createCommandEncoder();
+  for (let i = 0; i < simulationParams.iteration; i++) {
+    //密度の計算
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(dencityCalculationPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //密度の計算
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(dencityCalculationPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
+    //swapBuffer
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(swapBufferPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //swapBuffer
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(swapBufferPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
+    //圧力の計算
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(pressureCalculationPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //圧力の計算
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(pressureCalculationPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
+    //swapBuffer
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(swapBufferPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //swapBuffer
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(swapBufferPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
+    //forceの計算
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(forceClaclulationPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //forceの計算
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(forceClaclulationPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
+    //swapBuffer
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(swapBufferPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //swapBuffer
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(swapBufferPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
+    //mainの計算
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(computePipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
 
-  //mainの計算
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(computePipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
-  }
-
-  //swapBuffer
-  {
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(swapBufferPipeline);
-    passEncoder.setBindGroup(0, computeBindGroup);
-    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    passEncoder.end();
+    //swapBuffer
+    {
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(swapBufferPipeline);
+      passEncoder.setBindGroup(0, computeBindGroup);
+      passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+      passEncoder.end();
+    }
   }
 
   //パーティクルの描画
@@ -657,6 +710,58 @@ async function copyAndReadBufferData() {
     console.error("Error mapping buffer:", error);
   }
 }
+
+//データをコピーして特定のバッファを読み取る関数
+async function copyAndReadBufferDataPerParticle() {
+  // コマンドエンコーダを作成
+  const commandEncoder = device.createCommandEncoder();
+
+  // データを particlesReadBuffer から readbackBuffer にコピー
+  commandEncoder.copyBufferToBuffer(
+    particlesReadBuffer,
+    0,
+    readbackBuffer,
+    0,
+    numParticles * particleInstanceByteSize
+  );
+
+  // コマンドバッファを送信
+  const commands = commandEncoder.finish();
+  device.queue.submit([commands]);
+
+  // データの読み取り
+  try {
+    await readbackBuffer.mapAsync(
+      GPUMapMode.READ,
+      0,
+      numParticles * particleInstanceByteSize
+    );
+    const copyArrayBuffer = readbackBuffer.getMappedRange(
+      0,
+      numParticles * particleInstanceByteSize
+    );
+    const data = copyArrayBuffer.slice();
+    readbackBuffer.unmap();
+    const parsedData = parseParticleData(data);
+    console.log(
+      "density : ",
+      parsedData[0].density,
+      "pressure : ",
+      parsedData[0].pressure,
+      "position : ",
+      parsedData[0].position
+    );
+  } catch (error) {
+    console.error("Error mapping buffer:", error);
+  }
+}
+
+// fキーを押すと10msごとにデータを読み取り続ける
+document.addEventListener("keydown", (event) => {
+  if (event.key === "f" || event.key === "F") {
+    setInterval(copyAndReadBufferDataPerParticle, 100);
+  }
+});
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "c" || event.key === "C") {
