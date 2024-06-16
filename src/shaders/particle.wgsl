@@ -224,7 +224,9 @@ fn densityCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
       density += calculateDensity(r2);
     }
   }
+
   particle.density = density;
+  // particle.density = clamp(density, 0.0, 20.0);
   dataWrite.particles[idx] = particle;
 }
 
@@ -238,7 +240,8 @@ fn pressureCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 	var pressure: f32 = calculatePressure(density);
   // var pressure: f32 = 1.0;
 
-	particle.pressure = pressure;
+  particle.pressure = pressure;
+	// particle.pressure = clamp(pressure, -250.0, 250.0);
   dataWrite.particles[idx] = particle;
 }
 

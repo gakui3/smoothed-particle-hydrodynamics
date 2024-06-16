@@ -1,18 +1,16 @@
 import {mat4, vec3} from "wgpu-matrix";
-import {GUI} from "dat.gui";
 import {ArcRotateCamera} from "./arcRotateCamera.js";
 import Stats from "stats-js";
+import GUI from "lil-gui";
 
 import particleWGSL from "./shaders/particle.wgsl?raw";
-import probabilityMapWGSL from "./shaders/probabilityMap.wgsl?raw";
 
 //--------------------------------------------------------------------------------------
 // パラメータの設定
 //--------------------------------------------------------------------------------------
-const numParticles = 5120;
+const numParticles = 8192;
 const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
-const simulationStep = 0.005;
 
 const seed = [
   Math.random() * 100,
@@ -20,21 +18,36 @@ const seed = [
   1 + Math.random(),
   1 + Math.random(),
 ];
-const smoothlen = 0.5;
-const pressureStiffness = 0.57;
-const restDensity = 4.0;
-const particleMass = 0.08;
-const viscosity = 3.0;
-const wallStiffness = 5000.0;
-const iteration = 4;
-const gravity = [0.0, -10.0];
-const range = [16.0, 9.0];
 
-const densityCoef = (particleMass * 4.0) / (Math.PI * Math.pow(smoothlen, 8.0));
+const gravity = [0.0, -10.0];
+const range = [16.0, 16.0];
+
+const simulationParams = {
+  simulate: true,
+  simulationStep: 0.01,
+  smoothlen: 0.5,
+  pressureStiffness: 0.57,
+  restDensity: 4.0,
+  particleMass: 0.08,
+  viscosity: 4.0,
+  wallStiffness: 4000.0,
+  iteration: 4,
+  gravity: [0.0, -10.0],
+  range: [16.0, 16.0],
+  reset: () => {
+    init();
+  },
+};
+
+const densityCoef =
+  (simulationParams.particleMass * 4.0) /
+  (Math.PI * Math.pow(simulationParams.smoothlen, 8.0));
 const gradPressureCoef =
-  (particleMass * -30.0) / (Math.PI * Math.pow(smoothlen, 5.0));
-const lapPressureCoef =
-  (particleMass * 20.0) / (3.0 * Math.PI * Math.pow(smoothlen, 5.0));
+  (simulationParams.particleMass * -30.0) /
+  (Math.PI * Math.pow(simulationParams.smoothlen, 5.0));
+const lapViscosityCoef =
+  (simulationParams.particleMass * 20.0) /
+  (3.0 * Math.PI * Math.pow(simulationParams.smoothlen, 5.0));
 
 //--------------------------------------------------------------------------------------
 // 初期化の処理
@@ -47,7 +60,7 @@ const simulationUBOBufferSize =
   1 * 4 + // Smoothlen:f32
   1 * 4 + // DensityCoef: f32
   1 * 4 + //gradPressureCoef : f32
-  1 * 4 + // LapPressureCoef: f32
+  1 * 4 + // lapViscosityCoef: f32
   1 * 4 + // PressureStiffness: f32
   1 * 4 + // RestDensity: f32
   1 * 4 + // ParticleMass: f32
@@ -90,9 +103,7 @@ canvas.width = canvas.clientWidth * devicePixelRatio;
 canvas.height = canvas.clientHeight * devicePixelRatio;
 const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-/**
- * cameraの設定
- */
+// カメラの設定
 const camera = new ArcRotateCamera(Math.PI / 2, Math.PI / 2, 8.0);
 camera.attachControl(canvas);
 
@@ -103,14 +114,21 @@ context.configure({
 });
 
 // guiの設定
-const simulationParams = {
-  simulate: true,
-  deltaTime: simulationStep,
-};
-
 const gui = new GUI();
 gui.add(simulationParams, "simulate");
-gui.add(simulationParams, "deltaTime");
+gui.add(simulationParams, "simulationStep", 0.001, 0.03, 0.005);
+gui.add(simulationParams, "smoothlen", 0.1, 1.0, 0.1);
+gui.add(simulationParams, "pressureStiffness", 0.1, 1.0, 0.1);
+gui.add(simulationParams, "restDensity", 1.0, 10.0, 1.0);
+gui.add(simulationParams, "particleMass", 0.01, 0.1, 0.01);
+gui.add(simulationParams, "viscosity", 0.1, 10.0, 0.1);
+gui.add(simulationParams, "wallStiffness", 1000.0, 10000.0, 1000.0);
+gui.add(simulationParams, "iteration", 1, 10, 1);
+gui.add(simulationParams, "reset");
+
+gui.onChange(() => {
+  setSimulationUBO();
+});
 
 const stats = new Stats();
 stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
@@ -409,38 +427,41 @@ const swapBufferPipeline = device.createComputePipeline({
 });
 
 // バッファの初期化
-device.queue.writeBuffer(
-  simulationUBOBuffer,
-  0,
-  new Float32Array([
-    simulationParams.simulate ? simulationParams.deltaTime : 0.0,
-    0.0,
-    0.0,
-    0.0, // padding
-    seed[0],
-    seed[1], // seed.xy
-    seed[2],
-    seed[3], // seed.zw
-    smoothlen,
-    densityCoef,
-    gradPressureCoef,
-    lapPressureCoef,
-    pressureStiffness,
-    restDensity,
-    particleMass,
-    viscosity,
-    wallStiffness,
-    iteration,
-    gravity[0],
-    gravity[1],
-    range[0],
-    range[1], // range
-    numParticles,
-    0.0, // padding
-  ])
-);
+const setSimulationUBO = () => {
+  device.queue.writeBuffer(
+    simulationUBOBuffer,
+    0,
+    new Float32Array([
+      simulationParams.simulate ? simulationParams.simulationStep : 0.0,
+      0.0,
+      0.0,
+      0.0, // padding
+      seed[0],
+      seed[1], // seed.xy
+      seed[2],
+      seed[3], // seed.zw
+      simulationParams.smoothlen,
+      densityCoef,
+      gradPressureCoef,
+      lapViscosityCoef,
+      simulationParams.pressureStiffness,
+      simulationParams.restDensity,
+      simulationParams.particleMass,
+      simulationParams.viscosity,
+      simulationParams.wallStiffness,
+      simulationParams.iteration,
+      gravity[0],
+      gravity[1],
+      range[0],
+      range[1], // range
+      numParticles,
+      0.0, // padding
+    ])
+  );
+};
+setSimulationUBO();
 
-{
+const init = () => {
   const commandEncoder = device.createCommandEncoder();
   const passEncoder = commandEncoder.beginComputePass();
   passEncoder.setPipeline(initPipeline);
@@ -448,7 +469,8 @@ device.queue.writeBuffer(
   passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
   passEncoder.end();
   device.queue.submit([commandEncoder.finish()]);
-}
+};
+init();
 
 //--------------------------------------------------------------------------------------
 // メインループ
