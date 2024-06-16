@@ -9,9 +9,10 @@ import probabilityMapWGSL from "./shaders/probabilityMap.wgsl?raw";
 //--------------------------------------------------------------------------------------
 // パラメータの設定
 //--------------------------------------------------------------------------------------
-const numParticles = 512;
+const numParticles = 5120;
 const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
+const simulationStep = 0.005;
 
 const seed = [
   Math.random() * 100,
@@ -22,9 +23,9 @@ const seed = [
 const smoothlen = 0.5;
 const pressureStiffness = 0.57;
 const restDensity = 4.0;
-const particleMass = 0.82;
+const particleMass = 0.08;
 const viscosity = 3.0;
-const wallStiffness = 3000.0;
+const wallStiffness = 5000.0;
 const iteration = 4;
 const gravity = [0.0, -10.0];
 const range = [16.0, 9.0];
@@ -104,7 +105,7 @@ context.configure({
 // guiの設定
 const simulationParams = {
   simulate: true,
-  deltaTime: 0.01,
+  deltaTime: simulationStep,
 };
 
 const gui = new GUI();
@@ -488,20 +489,20 @@ async function frame() {
 
   //圧力の計算
   {
-    // const passEncoder = commandEncoder.beginComputePass();
-    // passEncoder.setPipeline(pressureCalculationPipeline);
-    // passEncoder.setBindGroup(0, computeBindGroup);
-    // passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    // passEncoder.end();
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(pressureCalculationPipeline);
+    passEncoder.setBindGroup(0, computeBindGroup);
+    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+    passEncoder.end();
   }
 
   //swapBuffer
   {
-    // const passEncoder = commandEncoder.beginComputePass();
-    // passEncoder.setPipeline(swapBufferPipeline);
-    // passEncoder.setBindGroup(0, computeBindGroup);
-    // passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
-    // passEncoder.end();
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(swapBufferPipeline);
+    passEncoder.setBindGroup(0, computeBindGroup);
+    passEncoder.dispatchWorkgroups(Math.ceil(numParticles / 64));
+    passEncoder.end();
   }
 
   //forceの計算
@@ -589,8 +590,8 @@ const parseParticleData = (data) => {
         floatData[offset + 13],
         floatData[offset + 14],
       ],
-      density: floatData[offset + 16],
-      pressure: floatData[offset + 17],
+      density: floatData[offset + 15],
+      pressure: floatData[offset + 16],
     };
     particleData.push(particle);
   }

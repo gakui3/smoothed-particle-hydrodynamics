@@ -102,19 +102,40 @@ fn calculateDensity(r_sq: f32) -> f32 {
 }
 
 fn calculatePressure(density: f32) -> f32 {
-  return params.pressureStiffness * max(pow(density / params.restDensity, 7.0) - 1.0, 0.0);
+  var press = params.pressureStiffness * max(pow(density / params.restDensity, 7.0) - 1.0, 0.0);
+  return press;
 }
 
-fn calculateGradPressure(r: f32, P_pressure: f32, N_pressure: f32, N_density: f32, diff: vec2<f32>) -> vec2<f32> {
+fn calculateGradPressure(r: f32, P_pressure: f32, N_pressure: f32, N_density: f32, diff: vec2f) -> vec2f {
   let h: f32 = params.smoothlen;
   let avg_pressure: f32 = 0.5 * (N_pressure + P_pressure);
   return params.gradPressureCoef * avg_pressure / N_density * (h - r) * (h - r) / r * diff;
 }
 
-fn calculateLapVelocity(r: f32, P_velocity: vec2<f32>, N_velocity: vec2<f32>, N_density: f32) -> vec2<f32> {
+fn calculateLapVelocity(r: f32, P_velocity: vec2f, N_velocity: vec2f, N_density: f32) -> vec2f {
   let h: f32 = params.smoothlen;
-  let vel_diff: vec2<f32> = N_velocity - P_velocity;
+  let vel_diff: vec2f = N_velocity - P_velocity;
   return params.lapViscosityCoef / N_density * (h - r) * vel_diff;
+}
+
+fn calculateAcceleration(position: vec3f, velocity: vec3f, acceleration: vec3f) -> vec3f {
+  var acc = acceleration;
+
+  var dist = dot(position, vec3f(1.0, 0.0, 0.0));
+  acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(1.0, 0.0), 0.0);
+
+  dist = dot(position, vec3f(0.0, 1.0, 0.0));
+  acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, 1.0), 0.0);
+
+  dist = dot(position, vec3f(-1.0, 0.0, params.range.x));
+  acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(-1.0, 0.0), 0.0);
+
+  dist = dot(position, vec3f(0.0, -1.0, params.range.y));
+  acc += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, -1.0), 0.0);
+
+  acc += vec3f(params.gravity.x, params.gravity.y, 0.0);
+
+  return acc;
 }
 
 @compute @workgroup_size(64)
@@ -125,14 +146,14 @@ fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
   // ランダムな角度と半径を生成
   let angle = rand() * 2.0 * 3.141592;
-  let radius = sqrt(rand()) * 2.0; // 半径5の円内にランダムに分布
+  let radius = sqrt(rand()) * 5.0; // 半径5の円内にランダムに分布
 
   // デカルト座標に変換
   let x = radius * cos(angle);
   let y = radius * sin(angle);
 
   // 初期位置を円内のランダムな位置に設定
-  particle.position = vec3f(x, y, 0.0) + vec3f(2.0, 5.0, 0.0);
+  particle.position = vec3f(x, y, 0.0) + vec3f(8.0, 5.0, 0.0);
   particle.color = vec4f(1.0, 1.0, 1.0, 1.0);
   particle.velocity = vec3f(0.0, 0.0, 0.0);
   particle.acceleration = vec3f(0.0, 0.0, 0.0);
@@ -141,42 +162,43 @@ fn init(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 }
 
 @compute @workgroup_size(64)
-fn simulate(@builtin(global_invocation_id) global_invocation_id : vec3u) {
+fn simulate(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
   let idx = global_invocation_id.x;
 
   var particle = dataRead.particles[idx];
-  var position = vec3f(particle.position.x, particle.position.y, 1.0);
+  var position = vec3<f32>(particle.position.x, particle.position.y, 1.0);
   var velocity = particle.velocity;
   var acceleration = particle.acceleration;
 
+  let dt = params.deltaTime;
+  let half_dt = dt * 0.5;
+  let sixth_dt = dt / 6.0;
 
-  var dist = dot(position, vec3f(1.0, 0.0, 0.0));
-  acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(1.0, 0.0), 0.0);
+  // RK4の計算
+  let k1_v = calculateAcceleration(position, velocity, acceleration);
+  let k1_x = velocity;
 
-  dist = dot(position, vec3f(0.0, 1.0, 0.0));
-  acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, 1.0), 0.0);
+  let k2_v = calculateAcceleration(position + half_dt * k1_x, velocity + half_dt * k1_v, acceleration);
+  let k2_x = velocity + half_dt * k1_v;
 
-  dist = dot(position, vec3f(-1.0, 0.0, params.range.x));
-  acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(-1.0, 0.0), 0.0);
+  let k3_v = calculateAcceleration(position + half_dt * k2_x, velocity + half_dt * k2_v, acceleration);
+  let k3_x = velocity + half_dt * k2_v;
 
-  dist = dot(position, vec3f(0.0, -1.0, params.range.y));
-  // acceleration += vec3f(min(dist, 0.0) * -params.wallStiffness * vec2<f32>(0.0, -1.0), 0.0);
+  let k4_v = calculateAcceleration(position + dt * k3_x, velocity + dt * k3_v, acceleration);
+  let k4_x = velocity + dt * k3_v;
 
-  // // 重力を適用します
-  acceleration += vec3f(params.gravity.x, params.gravity.y, 0.0);
-
-  // // 基本的な速度統合
-  velocity += acceleration * params.deltaTime;
-  position += velocity * params.deltaTime;
+  // 位置と速度の更新
+  position += sixth_dt * (k1_x + 2.0 * (k2_x + k3_x) + k4_x);
+  velocity += sixth_dt * (k1_v + 2.0 * (k2_v + k3_v) + k4_v);
 
   position.z = 0.0;
 
-  // // 粒子の位置を更新します
+  // 粒子の位置を更新
   particle.position = position;
   particle.velocity = velocity;
-  particle.color = vec4f(particle.density, 1.0, 0.0, 1.0);
+  particle.color = vec4<f32>(particle.density, 1.0, 0.0, 1.0);
 
-  // 新しい粒子値を保存します
+  // 新しい粒子値を保存
   dataWrite.particles[idx] = particle;
 }
 
@@ -214,6 +236,7 @@ fn pressureCS(@builtin(global_invocation_id) global_invocation_id : vec3u) {
 
   var density: f32 = particle.density;
 	var pressure: f32 = calculatePressure(density);
+  // var pressure: f32 = 1.0;
 
 	particle.pressure = pressure;
   dataWrite.particles[idx] = particle;
