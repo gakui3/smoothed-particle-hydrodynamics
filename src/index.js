@@ -1,5 +1,6 @@
 import {mat4, vec3} from "wgpu-matrix";
 import {ArcRotateCamera} from "./arcRotateCamera.js";
+import {SimpleCamera} from "./simpleCamera.js";
 import Stats from "stats-js";
 import GUI from "lil-gui";
 
@@ -24,7 +25,7 @@ const range = [16.0, 16.0];
 
 const simulationParams = {
   simulate: true,
-  simulationStep: 0.01,
+  simulationStep: 0.001,
   smoothlen: 0.5,
   pressureStiffness: 0.57,
   restDensity: 4.0,
@@ -104,8 +105,10 @@ canvas.height = canvas.clientHeight * devicePixelRatio;
 const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
 // カメラの設定
-const camera = new ArcRotateCamera(Math.PI / 2, Math.PI / 2, 8.0);
-camera.attachControl(canvas);
+// const camera = new ArcRotateCamera(Math.PI / 2, Math.PI / 2, 8.0);
+// camera.attachControl(canvas);
+const camera = new SimpleCamera([8, 5, 10], [8, 5, 0]);
+const mvpMatrix = camera.updateMVPMatrix();
 
 context.configure({
   device,
@@ -116,11 +119,11 @@ context.configure({
 // guiの設定
 const gui = new GUI();
 gui.add(simulationParams, "simulate");
-gui.add(simulationParams, "simulationStep", 0.001, 0.03, 0.005);
+gui.add(simulationParams, "simulationStep", 0.001, 0.03, 0.001);
 gui.add(simulationParams, "smoothlen", 0.1, 1.0, 0.1);
 gui.add(simulationParams, "pressureStiffness", 0.1, 1.0, 0.1);
 gui.add(simulationParams, "restDensity", 1.0, 10.0, 1.0);
-gui.add(simulationParams, "particleMass", 0.01, 0.1, 0.01);
+gui.add(simulationParams, "particleMass", 0.01, 0.2, 0.01);
 gui.add(simulationParams, "viscosity", 0.1, 10.0, 0.1);
 gui.add(simulationParams, "wallStiffness", 1000.0, 10000.0, 1000.0);
 gui.add(simulationParams, "iteration", 1, 10, 1);
@@ -478,11 +481,7 @@ init();
 async function frame() {
   stats.begin();
   // 描画用のバッファにデータを書き込み
-  device.queue.writeBuffer(
-    uniformBuffer,
-    0,
-    new Float32Array(camera.updateMVPMatrix())
-  );
+  device.queue.writeBuffer(uniformBuffer, 0, new Float32Array(mvpMatrix));
 
   //現在のスワップチェーンのテクスチャを取得します。このテクスチャがrender targetとして使用される
   const swapChainTexture = context.getCurrentTexture();
