@@ -9,7 +9,7 @@ import particleWGSL from "./shaders/particle.wgsl?raw";
 //--------------------------------------------------------------------------------------
 // パラメータの設定
 //--------------------------------------------------------------------------------------
-const numParticles = 4096; //8192;
+const numParticles = 5120;
 const particlePositionOffset = 0;
 const particleColorOffset = 4 * 4;
 
@@ -25,14 +25,14 @@ const range = [16.0, 12.0];
 
 const simulationParams = {
   simulate: true,
-  simulationStep: 0.001,
+  simulationStep: 0.003,
   smoothlen: 0.5,
-  pressureStiffness: 0.57,
+  pressureStiffness: 0.65,
   restDensity: 4.0,
   particleMass: 0.08,
-  viscosity: 4.0,
+  viscosity: 6.3,
   wallStiffness: 6000.0,
-  iteration: 4,
+  iteration: 6,
   reset: () => {
     init();
   },
@@ -129,10 +129,10 @@ const gui = new GUI();
 gui.add(simulationParams, "simulate");
 gui.add(simulationParams, "simulationStep", 0.001, 0.005, 0.001);
 gui.add(simulationParams, "smoothlen", 0.1, 1.0, 0.1);
-gui.add(simulationParams, "pressureStiffness", 0.1, 1.0, 0.1);
+gui.add(simulationParams, "pressureStiffness", 0.1, 1.0, 0.01);
 gui.add(simulationParams, "restDensity", 1.0, 10.0, 1.0);
 gui.add(simulationParams, "particleMass", 0.01, 0.2, 0.01);
-gui.add(simulationParams, "viscosity", 0.1, 10.0, 0.1);
+gui.add(simulationParams, "viscosity", 0.1, 10.0, 0.01);
 gui.add(simulationParams, "wallStiffness", 1000.0, 6000.0, 1000.0);
 gui.add(simulationParams, "iteration", 1, 20, 1);
 gui.add(simulationParams, "reset");

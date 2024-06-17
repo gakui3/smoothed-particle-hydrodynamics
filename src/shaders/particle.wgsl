@@ -110,7 +110,7 @@ fn calculateDensity(r_sq: f32) -> f32 {
 
 fn calculatePressure(density: f32) -> f32 {
   var press = params.pressureStiffness * max(pow(density / params.restDensity, 7.0) - 1.0, 0.0);
-  return press;
+  return max(press, 0.0);
 }
 
 fn calculateGradPressure(r: f32, P_pressure: f32, N_pressure: f32, N_density: f32, diff: vec2f) -> vec2f {

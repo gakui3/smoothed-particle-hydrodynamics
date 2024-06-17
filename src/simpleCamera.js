@@ -15,7 +15,9 @@ export class SimpleCamera {
   updateMVPMatrix() {
     const canvas = document.querySelector("canvas");
     const aspect = canvas.width / canvas.height;
-    this.projection = mat4.perspective((2 * Math.PI) / 5, aspect, 1, 100.0);
+    this.vfov = (2 * Math.PI) / 5;
+
+    this.projection = mat4.perspective(this.vfov, aspect, 1, 100.0);
     const mvp = mat4.create();
 
     mat4.identity(this.view);
@@ -64,23 +66,20 @@ export class SimpleCamera {
   screenToWorld(x, y, z) {
     const canvas = document.querySelector("canvas");
 
-    const invertView = mat4.create();
-    const invertProjection = mat4.create();
-    mat4.invert(this.view, invertView);
-    mat4.invert(this.projection, invertProjection);
-
-    const invertViewProjection = mat4.create();
-    mat4.multiply(invertView, invertProjection, invertViewProjection);
-
     const ix = (x / canvas.width) * 4 - 1;
     const iy = 1 - (y / canvas.height) * 4;
 
-    const screenPos = vec3.fromValues(ix, iy, z);
+    const hfov =
+      2 * Math.atan(Math.tan(this.vfov / 2) * (canvas.width / canvas.height));
+
+    const sx = z * Math.tan(hfov / 2);
+    const wx = ix * sx;
+
+    const sy = z * Math.tan(this.vfov / 2);
+    const wy = iy * sy;
 
     const worldPos = vec3.create();
-    vec3.transformMat4(screenPos, invertViewProjection, worldPos);
-
-    console.log(worldPos);
+    vec3.add(vec3.fromValues(wx, wy, 0), this.cameraPosition, worldPos);
 
     return worldPos;
   }
